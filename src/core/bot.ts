@@ -213,6 +213,9 @@ export class LettaBot {
       // Send message to agent with metadata envelope
       const formattedMessage = formatMessageEnvelope(msg);
       console.log('[Bot] Formatted message:', formattedMessage.slice(0, 200));
+      console.log('[Bot] Target server:', process.env.LETTA_BASE_URL || 'https://api.letta.com (default)');
+      console.log('[Bot] API key:', process.env.LETTA_API_KEY ? `${process.env.LETTA_API_KEY.slice(0, 20)}...` : '(not set)');
+      console.log('[Bot] Agent ID:', this.store.agentId || '(new agent)');
       console.log('[Bot] Sending message to session...');
       try {
         await session.send(formattedMessage);
