@@ -802,13 +802,23 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
 // ============================================================================
 
 export async function onboard(): Promise<void> {
-  // Temporary storage for wizard values (no longer uses .env)
+  // Temporary storage for wizard values
   const env: Record<string, string> = {};
+  
+  // Load existing config if available
+  const { loadConfig, resolveConfigPath } = await import('./config/index.js');
+  const existingConfig = loadConfig();
+  const configPath = resolveConfigPath();
+  const hasExistingConfig = existsSync(configPath);
   
   p.intro('🤖 LettaBot Setup');
   
-  // Show server info
-  const baseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+  if (hasExistingConfig) {
+    p.log.info(`Loading existing config from ${configPath}`);
+  }
+  
+  // Pre-populate from existing config
+  const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
   const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
   p.note(`${baseUrl}\n${isLocal ? 'Local Docker' : 'Letta Cloud'}`, 'Server');
   
@@ -834,34 +844,44 @@ export async function onboard(): Promise<void> {
   }
   
   // Initialize config from existing env
+  // Pre-populate from existing YAML config
   const config: OnboardConfig = {
-    authMethod: 'skip',
+    authMethod: hasExistingConfig ? 'keep' : 'skip',
+    apiKey: existingConfig.server.apiKey,
+    baseUrl: existingConfig.server.baseUrl,
     telegram: { 
-      enabled: !!env.TELEGRAM_BOT_TOKEN && !isPlaceholder(env.TELEGRAM_BOT_TOKEN),
-      token: isPlaceholder(env.TELEGRAM_BOT_TOKEN) ? undefined : env.TELEGRAM_BOT_TOKEN,
+      enabled: existingConfig.channels.telegram?.enabled || false,
+      token: existingConfig.channels.telegram?.token,
+      dmPolicy: existingConfig.channels.telegram?.dmPolicy,
+      allowedUsers: existingConfig.channels.telegram?.allowedUsers?.map(String),
     },
     slack: { 
-      enabled: !!env.SLACK_BOT_TOKEN,
-      appToken: env.SLACK_APP_TOKEN,
-      botToken: env.SLACK_BOT_TOKEN,
+      enabled: existingConfig.channels.slack?.enabled || false,
+      appToken: existingConfig.channels.slack?.appToken,
+      botToken: existingConfig.channels.slack?.botToken,
+      allowedUsers: existingConfig.channels.slack?.allowedUsers,
     },
     whatsapp: { 
-      enabled: env.WHATSAPP_ENABLED === 'true',
-      selfChat: env.WHATSAPP_SELF_CHAT_MODE === 'true',
+      enabled: existingConfig.channels.whatsapp?.enabled || false,
+      selfChat: existingConfig.channels.whatsapp?.selfChat,
+      dmPolicy: existingConfig.channels.whatsapp?.dmPolicy,
     },
     signal: { 
-      enabled: !!env.SIGNAL_PHONE_NUMBER,
-      phone: env.SIGNAL_PHONE_NUMBER,
+      enabled: existingConfig.channels.signal?.enabled || false,
+      phone: existingConfig.channels.signal?.phone,
+      dmPolicy: existingConfig.channels.signal?.dmPolicy,
     },
     gmail: { enabled: false },
     heartbeat: { 
-      enabled: !!env.HEARTBEAT_INTERVAL_MIN,
-      interval: env.HEARTBEAT_INTERVAL_MIN,
+      enabled: existingConfig.features?.heartbeat?.enabled || false,
+      interval: existingConfig.features?.heartbeat?.intervalMin?.toString(),
     },
-    cron: env.CRON_ENABLED === 'true',
-    agentChoice: 'skip',
-    agentName: env.AGENT_NAME,
-    model: env.MODEL,
+    cron: existingConfig.features?.cron || false,
+    agentChoice: hasExistingConfig ? 'env' : 'skip',
+    agentName: existingConfig.agent.name,
+    agentId: existingConfig.agent.id,
+    model: existingConfig.agent.model,
+    providers: existingConfig.providers?.map(p => ({ id: p.id, name: p.name, apiKey: p.apiKey })),
   };
   
   // Run through all steps
@@ -1053,9 +1073,9 @@ export async function onboard(): Promise<void> {
     }));
   }
   
-  // Save YAML config
-  const configPath = resolve(process.cwd(), 'lettabot.yaml');
-  saveConfig(yamlConfig, configPath);
+  // Save YAML config (use project-local path)
+  const savePath = resolve(process.cwd(), 'lettabot.yaml');
+  saveConfig(yamlConfig, savePath);
   p.log.success('Configuration saved to lettabot.yaml');
   
   // Sync BYOK providers to Letta Cloud
