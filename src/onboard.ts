@@ -372,7 +372,9 @@ async function stepModel(config: OnboardConfig, env: Record<string, string>): Pr
   let billingTier: string | null = null;
   if (!isSelfHosted) {
     spinner.start('Checking account...');
-    billingTier = await getBillingTier();
+    // Pass the API key explicitly since it may not be in process.env yet
+    const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
+    billingTier = await getBillingTier(apiKey);
     config.billingTier = billingTier ?? undefined;
     spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'unknown'}`);
   }

@@ -23,28 +23,35 @@ export interface ModelInfo {
 
 /**
  * Get billing tier from Letta API
+ * Uses /v1/metadata/balance endpoint (same as letta-code)
  */
-export async function getBillingTier(): Promise<string | null> {
+export async function getBillingTier(apiKey?: string): Promise<string | null> {
   try {
     const baseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
-    const apiKey = process.env.LETTA_API_KEY;
+    const key = apiKey || process.env.LETTA_API_KEY;
     
     // Self-hosted servers don't have billing tiers
     if (baseUrl !== 'https://api.letta.com') {
       return null;
     }
     
-    if (!apiKey) return 'free';
+    if (!key) return 'free';
     
-    const response = await fetch(`${baseUrl}/v1/users/me/balance`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
+    const response = await fetch(`${baseUrl}/v1/metadata/balance`, {
+      headers: { 'Authorization': `Bearer ${key}` },
     });
     
-    if (!response.ok) return 'free';
+    if (!response.ok) {
+      console.error(`[BillingTier] API returned ${response.status}`);
+      return 'free';
+    }
     
     const data = await response.json() as { billing_tier?: string };
-    return data.billing_tier?.toLowerCase() ?? 'free';
-  } catch {
+    const tier = data.billing_tier?.toLowerCase() ?? 'free';
+    console.log(`[BillingTier] Got tier: ${tier}`);
+    return tier;
+  } catch (err) {
+    console.error(`[BillingTier] Error:`, err);
     return 'free';
   }
 }
