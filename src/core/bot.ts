@@ -189,7 +189,7 @@ export class LettaBot {
         session = createSession({ ...baseOptions, model: this.config.model, memory: loadMemoryBlocks(this.config.agentName) });
       }
       
-      const initTimeoutMs = 30000; // Increased to 30s
+      const initTimeoutMs = 30000; // 30s timeout
       const withTimeout = async <T>(promise: Promise<T>, label: string): Promise<T> => {
         let timeoutId: NodeJS.Timeout;
         const timeoutPromise = new Promise<T>((_, reject) => {
@@ -203,6 +203,12 @@ export class LettaBot {
           clearTimeout(timeoutId!);
         }
       };
+
+      // Log diagnostic info for debugging connection issues
+      console.log('[Bot] Initializing session...');
+      console.log('[Bot] API key set:', !!process.env.LETTA_API_KEY);
+      console.log('[Bot] Base URL:', process.env.LETTA_BASE_URL || 'https://api.letta.com (default)');
+      console.log('[Bot] Node version:', process.version);
 
       const initInfo = await withTimeout(session.initialize(), 'Session initialize');
       console.log('[Bot] Session initialized, agent:', initInfo.agentId);
