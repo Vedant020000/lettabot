@@ -206,7 +206,8 @@ async function main() {
     case 'onboard':
     case 'setup':
     case 'init':
-      await onboard();
+      const nonInteractive = args.includes('--non-interactive') || args.includes('-n');
+      await onboard({ nonInteractive });
       break;
       
     case 'server':

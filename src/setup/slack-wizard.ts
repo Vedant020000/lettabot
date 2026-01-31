@@ -85,13 +85,14 @@ async function stepCreateApp(): Promise<boolean> {
   p.log.step('Step 1/3: Create Slack App from Manifest');
   
   // Inline manifest for Socket Mode configuration
+  const appName = process.env.SLACK_APP_NAME || process.env.LETTA_AGENT_NAME || 'LettaBot';
   const manifest = `display_information:
-  name: LettaBot
+  name: ${appName}
   description: AI assistant with Socket Mode for real-time conversations
   background_color: "#2c2d30"
 features:
   bot_user:
-    display_name: LettaBot
+    display_name: ${appName}
     always_online: false
 oauth_config:
   scopes:

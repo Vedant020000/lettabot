@@ -50,9 +50,29 @@ See the [documentation](https://docs.letta.com/guides/docker/) for more details 
 
 ### Setup
 
-Run the interactive onboarding wizard:
+**Option 1: AI-Assisted Setup (Recommended)**
+
+Paste this into Letta Code, Claude Code, Codex CLI, or any AI coding assistant:
+
+```
+Clone https://github.com/letta-ai/lettabot, read the SKILL.md
+for setup instructions, and help me configure Telegram.
+```
+
+You'll need:
+- A Letta API key from [app.letta.com](https://app.letta.com) (or a [Letta Docker server](https://docs.letta.com/guides/docker/))
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+
+The AI will handle the rest: cloning, installing dependencies, reading setup docs, and configuring your bot.
+
+**Option 2: Interactive Wizard**
+
+For manual step-by-step setup:
 
 ```bash
+git clone https://github.com/letta-ai/lettabot.git
+cd lettabot
+npm install && npm run build && npm link
 lettabot onboard
 ```
 
@@ -63,6 +83,8 @@ lettabot server
 ```
 
 That's it! Message your bot on Telegram.
+
+> **Note:** For detailed environment variable reference and multi-channel setup, see [SKILL.md](./SKILL.md)
 
 ## Skills
 LettaBot is compatible with [skills.sh](https://skills.sh) and [Clawdhub](https://clawdhub.com/). 

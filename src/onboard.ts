@@ -10,6 +10,119 @@ import { saveConfig, syncProviders } from './config/index.js';
 import type { LettaBotConfig, ProviderConfig } from './config/types.js';
 
 // ============================================================================
+// Non-Interactive Helpers
+// ============================================================================
+
+function readConfigFromEnv(existingConfig: any): any {
+  return {
+    baseUrl: process.env.LETTA_BASE_URL || existingConfig.server?.baseUrl || 'https://api.letta.com',
+    apiKey: process.env.LETTA_API_KEY || existingConfig.server?.apiKey,
+    agentId: process.env.LETTA_AGENT_ID || existingConfig.agent?.id,
+    agentName: process.env.LETTA_AGENT_NAME || existingConfig.agent?.name || 'lettabot',
+    model: process.env.LETTA_MODEL || existingConfig.agent?.model || 'claude-sonnet-4',
+    
+    telegram: {
+      enabled: !!process.env.TELEGRAM_BOT_TOKEN,
+      botToken: process.env.TELEGRAM_BOT_TOKEN || existingConfig.channels?.telegram?.token,
+      dmPolicy: process.env.TELEGRAM_DM_POLICY || existingConfig.channels?.telegram?.dmPolicy || 'pairing',
+      allowedUsers: process.env.TELEGRAM_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.telegram?.allowedUsers,
+    },
+    
+    slack: {
+      enabled: !!(process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN),
+      botToken: process.env.SLACK_BOT_TOKEN || existingConfig.channels?.slack?.botToken,
+      appToken: process.env.SLACK_APP_TOKEN || existingConfig.channels?.slack?.appToken,
+      dmPolicy: process.env.SLACK_DM_POLICY || existingConfig.channels?.slack?.dmPolicy || 'pairing',
+      allowedUsers: process.env.SLACK_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.slack?.allowedUsers,
+    },
+    
+    discord: {
+      enabled: !!process.env.DISCORD_BOT_TOKEN,
+      botToken: process.env.DISCORD_BOT_TOKEN || existingConfig.channels?.discord?.token,
+      dmPolicy: process.env.DISCORD_DM_POLICY || existingConfig.channels?.discord?.dmPolicy || 'pairing',
+      allowedUsers: process.env.DISCORD_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.discord?.allowedUsers,
+    },
+    
+    whatsapp: {
+      enabled: process.env.WHATSAPP_ENABLED === 'true' || !!existingConfig.channels?.whatsapp?.enabled,
+      selfChat: process.env.WHATSAPP_SELF_CHAT === 'true' || !!existingConfig.channels?.whatsapp?.selfChat || false,
+      dmPolicy: process.env.WHATSAPP_DM_POLICY || existingConfig.channels?.whatsapp?.dmPolicy || 'pairing',
+      allowedUsers: process.env.WHATSAPP_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.whatsapp?.allowedUsers,
+    },
+    
+    signal: {
+      enabled: !!process.env.SIGNAL_PHONE_NUMBER,
+      phoneNumber: process.env.SIGNAL_PHONE_NUMBER || existingConfig.channels?.signal?.phoneNumber,
+      dmPolicy: process.env.SIGNAL_DM_POLICY || existingConfig.channels?.signal?.dmPolicy || 'pairing',
+      allowedUsers: process.env.SIGNAL_ALLOWED_USERS?.split(',').map(s => s.trim()) || existingConfig.channels?.signal?.allowedUsers,
+    },
+  };
+}
+
+async function saveConfigFromEnv(config: any, configPath: string): Promise<void> {
+  const { saveConfig } = await import('./config/index.js');
+  
+  const lettabotConfig: LettaBotConfig = {
+    server: {
+      mode: config.baseUrl?.includes('localhost') ? 'selfhosted' : 'cloud',
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+    },
+    agent: {
+      id: config.agentId,
+      name: config.agentName,
+      model: config.model,
+    },
+    channels: {
+      telegram: config.telegram.enabled ? {
+        enabled: true,
+        token: config.telegram.botToken,
+        dmPolicy: config.telegram.dmPolicy,
+        allowedUsers: config.telegram.allowedUsers,
+      } : { enabled: false },
+      
+      slack: config.slack.enabled ? {
+        enabled: true,
+        botToken: config.slack.botToken,
+        appToken: config.slack.appToken,
+        allowedUsers: config.slack.allowedUsers,
+      } : { enabled: false },
+      
+      discord: config.discord.enabled ? {
+        enabled: true,
+        token: config.discord.botToken,
+        dmPolicy: config.discord.dmPolicy,
+        allowedUsers: config.discord.allowedUsers,
+      } : { enabled: false },
+      
+      whatsapp: config.whatsapp.enabled ? {
+        enabled: true,
+        selfChat: config.whatsapp.selfChat,
+        dmPolicy: config.whatsapp.dmPolicy,
+        allowedUsers: config.whatsapp.allowedUsers,
+      } : { enabled: false },
+      
+      signal: config.signal.enabled ? {
+        enabled: true,
+        phone: config.signal.phoneNumber,
+        selfChat: config.signal.selfChat,
+        dmPolicy: config.signal.dmPolicy,
+        allowedUsers: config.signal.allowedUsers,
+      } : { enabled: false },
+    },
+    features: {
+      cron: false,
+      heartbeat: {
+        enabled: false,
+        intervalMin: 60,
+      },
+    },
+  };
+  
+  saveConfig(lettabotConfig);
+}
+
+// ============================================================================
 // Config Types
 // ============================================================================
 
@@ -1173,7 +1286,8 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
 // Main Onboard Function
 // ============================================================================
 
-export async function onboard(): Promise<void> {
+export async function onboard(options?: { nonInteractive?: boolean }): Promise<void> {
+  const nonInteractive = options?.nonInteractive || false;
   // Temporary storage for wizard values
   const env: Record<string, string> = {};
   
@@ -1182,6 +1296,46 @@ export async function onboard(): Promise<void> {
   const existingConfig = loadConfig();
   const configPath = resolveConfigPath();
   const hasExistingConfig = existsSync(configPath);
+  
+  // Non-interactive mode: read all config from env vars
+  if (nonInteractive) {
+    console.log('🤖 LettaBot Non-Interactive Setup\n');
+    console.log('Reading configuration from environment variables...\n');
+    
+    const config = readConfigFromEnv(existingConfig);
+    
+    // Validate required fields
+    if (!config.baseUrl) {
+      console.error('❌ Error: LETTA_BASE_URL is required');
+      process.exit(1);
+    }
+    
+    if (!config.apiKey && !config.baseUrl?.includes('localhost')) {
+      console.error('❌ Error: LETTA_API_KEY is required (or use self-hosted with LETTA_BASE_URL)');
+      process.exit(1);
+    }
+    
+    // Test server connection
+    console.log(`Connecting to ${config.baseUrl}...`);
+    try {
+      const res = await fetch(`${config.baseUrl}/v1/health`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        console.log('✅ Connected to server\n');
+      } else {
+        console.error(`❌ Server returned status ${res.status}`);
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(`❌ Could not connect to ${config.baseUrl}`);
+      process.exit(1);
+    }
+    
+    // Save config and exit
+    await saveConfigFromEnv(config, configPath);
+    console.log(`✅ Configuration saved to ${configPath}\n`);
+    console.log('Run "lettabot server" to start the bot.');
+    return;
+  }
   
   p.intro('🤖 LettaBot Setup');
   
