@@ -304,6 +304,15 @@ See all releases: [GitHub Releases](https://github.com/letta-ai/lettabot/release
 
 ### WhatsApp
 
+**Cannot find package 'keyv'**
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'keyv'
+```
+Clean reinstall fixes this:
+```bash
+rm -rf node_modules package-lock.json && npm install
+```
+
 **Session errors / "Bad MAC" messages**
 These are normal Signal Protocol renegotiation messages. They're noisy but harmless.
 
