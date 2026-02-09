@@ -16,6 +16,7 @@ import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOpt
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import { parseDirectives, stripActionsBlock, type Directive } from './directives.js';
 
 
 /**
@@ -150,6 +151,38 @@ export class LettaBot implements AgentSession {
   // =========================================================================
   // Session lifecycle helpers
   // =========================================================================
+
+  /**
+   * Execute parsed directives (reactions, etc.) via the channel adapter.
+   * Returns true if any directive was successfully executed.
+   */
+  private async executeDirectives(
+    directives: Directive[],
+    adapter: ChannelAdapter,
+    chatId: string,
+    fallbackMessageId?: string,
+  ): Promise<boolean> {
+    let acted = false;
+    for (const directive of directives) {
+      if (directive.type === 'react') {
+        const targetId = directive.messageId || fallbackMessageId;
+        if (!adapter.addReaction) {
+          console.warn(`[Bot] Directive react skipped: ${adapter.name} does not support addReaction`);
+          continue;
+        }
+        if (targetId) {
+          try {
+            await adapter.addReaction(chatId, targetId, directive.emoji);
+            acted = true;
+            console.log(`[Bot] Directive: reacted with ${directive.emoji}`);
+          } catch (err) {
+            console.warn('[Bot] Directive react failed:', err instanceof Error ? err.message : err);
+          }
+        }
+      }
+    }
+    return acted;
+  }
 
   /**
    * Create or resume a session with automatic fallback.
@@ -563,6 +596,14 @@ export class LettaBot implements AgentSession {
           lastUpdate = Date.now();
           return;
         }
+        // Parse and execute XML directives before sending
+        if (response.trim()) {
+          const { cleanText, directives } = parseDirectives(response);
+          response = cleanText;
+          if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
+            sentAnyMessage = true;
+          }
+        }
         if (response.trim()) {
           try {
             if (messageId) {
@@ -628,14 +669,20 @@ export class LettaBot implements AgentSession {
             response += streamMsg.content || '';
             
             // Live-edit streaming for channels that support it
+            // Hold back streaming edits while response could still be <no-reply/> or <actions> block
             const canEdit = adapter.supportsEditing?.() ?? true;
-            const mayBeNoReply = '<no-reply/>'.startsWith(response.trim());
-            if (canEdit && !mayBeNoReply && Date.now() - lastUpdate > 500 && response.length > 0) {
+            const trimmed = response.trim();
+            const mayBeHidden = '<no-reply/>'.startsWith(trimmed)
+              || '<actions>'.startsWith(trimmed)
+              || (trimmed.startsWith('<actions') && !trimmed.includes('</actions>'));
+            // Strip any completed <actions> block from the streaming text
+            const streamText = stripActionsBlock(response).trim();
+            if (canEdit && !mayBeHidden && streamText.length > 0 && Date.now() - lastUpdate > 500) {
               try {
                 if (messageId) {
-                  await adapter.editMessage(msg.chatId, messageId, response);
+                  await adapter.editMessage(msg.chatId, messageId, streamText);
                 } else {
-                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: response, threadId: msg.threadId });
+                  const result = await adapter.sendMessage({ chatId: msg.chatId, text: streamText, threadId: msg.threadId });
                   messageId = result.messageId;
                   sentAnyMessage = true;
                 }
@@ -684,6 +731,15 @@ export class LettaBot implements AgentSession {
       if (response.trim() === '<no-reply/>') {
         sentAnyMessage = true;
         response = '';
+      }
+
+      // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
+      if (response.trim()) {
+        const { cleanText, directives } = parseDirectives(response);
+        response = cleanText;
+        if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId)) {
+          sentAnyMessage = true;
+        }
       }
 
       // Detect unsupported multimodal
