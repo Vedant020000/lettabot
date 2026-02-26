@@ -5,15 +5,16 @@
  */
 
 import { createAgent, createSession, resumeSession, imageFromFile, imageFromURL, type Session, type MessageContentItem, type SendMessage, type CanUseToolCallback } from '@letta-ai/letta-code-sdk';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { access, unlink, realpath, stat, constants } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext } from './types.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
 import { updateAgentName, getPendingApprovals, rejectApproval, cancelRuns, recoverOrphanedConversationApproval, getLatestRunError } from '../tools/letta-api.js';
-import { installSkillsToAgent } from '../skills/loader.js';
+import { installSkillsToAgent, withAgentSkillsOnPath, getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
 import { loadMemoryBlocks } from './memory.js';
@@ -117,10 +118,16 @@ const IMAGE_FILE_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
 ]);
 
-/** Infer whether a file is an image or generic file based on extension. */
-export function inferFileKind(filePath: string): 'image' | 'file' {
+const AUDIO_FILE_EXTENSIONS = new Set([
+  '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
+]);
+
+/** Infer whether a file is an image, audio, or generic file based on extension. */
+export function inferFileKind(filePath: string): 'image' | 'file' | 'audio' {
   const ext = extname(filePath).toLowerCase();
-  return IMAGE_FILE_EXTENSIONS.has(ext) ? 'image' : 'file';
+  if (IMAGE_FILE_EXTENSIONS.has(ext)) return 'image';
+  if (AUDIO_FILE_EXTENSIONS.has(ext)) return 'audio';
+  return 'file';
 }
 
 /**
@@ -776,6 +783,59 @@ export class LettaBot implements AgentSession {
           console.warn('[Bot] Directive send-file failed:', err instanceof Error ? err.message : err);
         }
       }
+
+      if (directive.type === 'voice') {
+        if (!isVoiceMemoConfigured()) {
+          log.warn('Directive voice skipped: no TTS credentials configured');
+          continue;
+        }
+        if (typeof adapter.sendFile !== 'function') {
+          log.warn(`Directive voice skipped: ${adapter.name} does not support sendFile`);
+          continue;
+        }
+
+        // Find lettabot-tts in agent's skill dirs
+        const agentId = this.store.agentId;
+        const skillDirs = agentId ? getAgentSkillExecutableDirs(agentId) : [];
+        const ttsPath = skillDirs
+          .map(dir => join(dir, 'lettabot-tts'))
+          .find(p => existsSync(p));
+
+        if (!ttsPath) {
+          log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
+          continue;
+        }
+
+        try {
+          const outputPath = await new Promise<string>((resolve, reject) => {
+            execFile(ttsPath, [directive.text], {
+              cwd: this.config.workingDir,
+              env: { ...process.env, LETTABOT_WORKING_DIR: this.config.workingDir },
+              timeout: 30_000,
+            }, (err, stdout, stderr) => {
+              if (err) {
+                reject(new Error(stderr?.trim() || err.message));
+              } else {
+                resolve(stdout.trim());
+              }
+            });
+          });
+
+          await adapter.sendFile({
+            chatId,
+            filePath: outputPath,
+            kind: 'audio',
+            threadId,
+          });
+          acted = true;
+          log.info(`Directive: sent voice memo (${directive.text.length} chars)`);
+
+          // Clean up generated file
+          try { await unlink(outputPath); } catch {}
+        } catch (err) {
+          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
+        }
+      }
     }
     return acted;
   }
@@ -864,6 +924,7 @@ export class LettaBot implements AgentSession {
 
     const opts = this.baseSessionOptions(this.sessionCanUseTool);
     let session: Session;
+    let sessionAgentId: string | undefined;
 
     // In per-channel mode, look up per-key conversation ID.
     // In shared mode (key === "shared"), use the legacy single conversationId.
@@ -873,9 +934,15 @@ export class LettaBot implements AgentSession {
 
     if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
+      if (this.store.agentId) {
+        installSkillsToAgent(this.store.agentId, this.config.skills);
+        sessionAgentId = this.store.agentId;
+      }
       session = resumeSession(convId, opts);
     } else if (this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
+      installSkillsToAgent(this.store.agentId, this.config.skills);
+      sessionAgentId = this.store.agentId;
       session = createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
@@ -893,6 +960,7 @@ export class LettaBot implements AgentSession {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});
       }
       installSkillsToAgent(newAgentId, this.config.skills);
+      sessionAgentId = newAgentId;
 
       session = createSession(newAgentId, opts);
     }
@@ -900,7 +968,14 @@ export class LettaBot implements AgentSession {
     // Initialize eagerly so the subprocess is ready before the first send()
     log.info(`Initializing session subprocess (key=${key})...`);
     try {
-      await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      if (sessionAgentId) {
+        await withAgentSkillsOnPath(
+          sessionAgentId,
+          () => this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`),
+        );
+      } else {
+        await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
+      }
       log.info(`Session subprocess ready (key=${key})`);
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
@@ -1680,7 +1755,11 @@ export class LettaBot implements AgentSession {
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
           const preview = JSON.stringify(streamMsg).slice(0, 300);
-          log.info(`type=${streamMsg.type} ${preview}`);
+          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant') {
+            log.debug(`type=${streamMsg.type} ${preview}`);
+          } else {
+            log.info(`type=${streamMsg.type} ${preview}`);
+          }
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
@@ -1694,6 +1773,7 @@ export class LettaBot implements AgentSession {
 
           // Flush reasoning buffer when type changes away from reasoning
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
+            log.info(`Reasoning: ${reasoningBuffer.trim()}`);
             if (this.config.display?.showReasoning && !suppressDelivery) {
               try {
                 const reasoning = this.formatReasoningDisplay(reasoningBuffer, adapter.id);
@@ -2180,7 +2260,7 @@ export class LettaBot implements AgentSession {
     options: {
       text?: string;
       filePath?: string;
-      kind?: 'image' | 'file';
+      kind?: 'image' | 'file' | 'audio';
     }
   ): Promise<string | undefined> {
     const adapter = this.channels.get(channelId);
