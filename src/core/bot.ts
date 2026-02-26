@@ -2233,8 +2233,9 @@ export class LettaBot implements AgentSession {
 
   async sendToAgent(
     text: string,
-    _context?: TriggerContext
+    context?: TriggerContext
   ): Promise<string> {
+    const isSilent = context?.outputMode === 'silent';
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
     
@@ -2278,6 +2279,9 @@ export class LettaBot implements AgentSession {
             break;
           }
         }
+        if (isSilent && response.trim()) {
+          log.info(`Silent mode: collected ${response.length} chars (not delivered)`);
+        }
         return response;
       } catch (error) {
         // Invalidate on stream errors so next call gets a fresh subprocess
@@ -2295,7 +2299,7 @@ export class LettaBot implements AgentSession {
    */
   async *streamToAgent(
     text: string,
-    _context?: TriggerContext
+    context?: TriggerContext
   ): AsyncGenerator<StreamMsg> {
     const convKey = this.resolveHeartbeatConversationKey();
     const acquired = await this.acquireLock(convKey);
