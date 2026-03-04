@@ -10,6 +10,10 @@ export interface GroupModeConfig {
   allowedUsers?: string[];
   /** Process messages from other bots instead of dropping them. Default: false. */
   receiveBotMessages?: boolean;
+  /** Maximum messages per user per day in this group. Default: unlimited. */
+  dailyLimit?: number;
+  /** What to do when daily limit is reached. Default: 'silent'. */
+  onLimitReached?: 'silent' | 'notify';
   /**
    * @deprecated Use mode: "mention-only" (true) or "open" (false).
    */

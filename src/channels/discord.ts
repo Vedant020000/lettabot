@@ -12,6 +12,7 @@ import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
 import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { incrementAndCheck } from '../rate-limit/store.js';
 import { basename } from 'node:path';
 
 import { createLogger } from '../logger.js';
@@ -285,6 +286,22 @@ Ask the bot owner to approve with:
 
           if (!isGroupUserAllowed(this.config.groups, keys, userId)) {
             return; // User not in group allowedUsers -- silent drop
+          }
+
+          const effectiveConfig = (() => {
+            for (const key of keys) {
+              if (this.config.groups?.[key]) return this.config.groups[key];
+            }
+            return this.config.groups?.['*'];
+          })();
+          if (effectiveConfig?.dailyLimit) {
+            const allowed = await incrementAndCheck(chatId, userId, effectiveConfig.dailyLimit);
+            if (!allowed) {
+              if (effectiveConfig.onLimitReached === 'notify') {
+                await message.reply('You have reached your daily message limit for this group.');
+              }
+              return;
+            }
           }
 
           const mode = resolveGroupMode(this.config.groups, keys, 'open');
