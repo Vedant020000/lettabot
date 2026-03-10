@@ -605,7 +605,7 @@ export class LettaBot implements AgentSession {
 
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
-    adapter.onCommand = (cmd, chatId, args) => this.handleCommand(cmd, adapter.id, chatId, args);
+    adapter.onCommand = (cmd, chatId, args, forcePerChat) => this.handleCommand(cmd, adapter.id, chatId, args, forcePerChat);
 
     // Wrap outbound methods when any redaction layer is active.
     // Secrets are enabled by default unless explicitly disabled.
@@ -666,7 +666,7 @@ export class LettaBot implements AgentSession {
   // Commands
   // =========================================================================
 
-  private async handleCommand(command: string, channelId?: string, chatId?: string, args?: string): Promise<string | null> {
+  private async handleCommand(command: string, channelId?: string, chatId?: string, args?: string, forcePerChat?: boolean): Promise<string | null> {
     log.info(`Received: /${command}${args ? ` ${args}` : ''}`);
     switch (command) {
       case 'status': {
@@ -694,7 +694,7 @@ export class LettaBot implements AgentSession {
         // other channels/chats' conversations are never silently destroyed.
         // resolveConversationKey returns 'shared' for non-override channels,
         // the channel id for per-channel, or channel:chatId for per-chat.
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
 
         // In disabled mode the bot always uses the agent's built-in default
         // conversation -- there's nothing to reset locally.
@@ -725,7 +725,7 @@ export class LettaBot implements AgentSession {
         }
       }
       case 'cancel': {
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
 
         // Check if there's actually an active run for this conversation key
         if (!this.processingKeys.has(convKey) && !this.processing) {
